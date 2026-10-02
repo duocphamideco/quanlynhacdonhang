@@ -1,0 +1,116 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>IDECO · Quản lý thông báo Huyền</title><style>[hidden]{display:none!important}.gate{max-width:430px;margin:12vh auto;background:white;padding:30px;border:1px solid #dce7e0;border-radius:20px}.gate input{width:100%;margin:12px 0}
+*{box-sizing:border-box}body{margin:0;background:#f1f6f3;color:#17352d;font:15px/1.5 Arial,sans-serif}main{max-width:1150px;margin:auto;padding:32px 20px}header{background:#075e4c;color:white;padding:32px;border-radius:24px}h1{margin:6px 0;font-size:29px}h2{font-size:19px}p{margin:8px 0}button,input,textarea{font:inherit}button{cursor:pointer;border:0;padding:11px 16px;border-radius:10px;background:#08745e;color:white}button:disabled{opacity:.5;cursor:wait}.danger{background:#ad3030}.secondary{background:#e5efe9;color:#14523f}.card{background:white;border:1px solid #dce7e0;border-radius:18px;padding:22px;margin-top:20px}.tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center}input{padding:11px;border:1px solid #ccdad2;border-radius:9px}.grow{flex:1;min-width:180px}.status{font-size:13px;color:#62796d}article{border-top:1px solid #e1e9e4;padding:18px 0}article:first-child{border:0}.meta{font-size:13px;color:#65796f}.body{white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;background:#f5f8f6;padding:15px;border-radius:10px}.actions{display:flex;gap:8px;margin-top:12px}textarea{width:100%;height:145px;margin-top:12px;border:1px solid #d2ded7;border-radius:10px;padding:12px;font:12px monospace}summary{cursor:pointer;font-weight:700}label{display:inline-flex;gap:6px;align-items:center}button:focus-visible{outline:3px solid #f1b834}@media(max-width:600px){main{padding:14px}header{padding:22px}h1{font-size:24px}}
+</style></head><body><section id="loginGate" class="gate"><h2>IDECO · Quản lý Huyền</h2><p>Nhập mật khẩu để mở bảng quản lý.</p><form id="loginForm"><input id="password" type="password" autocomplete="current-password" placeholder="Mật khẩu quản lý" aria-label="Mật khẩu quản lý" required><button type="submit">Mở quản lý</button><p id="loginError" role="alert"></p></form></section><main id="managerMain" hidden><header><small>IDECO / TRUNG TÂM THÔNG BÁO</small><button id="lock" style="float:right">Khóa quản lý</button><h1>Góp ý kế hoạch từ Huyền</h1><p>Phân tích xong → Lưu danh sách → Bấm LIVE → Website hiện popup → Người xem bấm Đã đọc (LIVE tự tắt)</p></header>
+<section class="card"><div class="tools"><input id="search" class="grow" placeholder="Tìm nhân viên hoặc nội dung…" aria-label="Tìm kiếm"><label>Ngày lập <input id="date" type="date"></label><button id="refresh" class="secondary">Kết nối lại</button></div><p id="status" class="status" role="status">Đang kết nối Firebase…</p><div class="tools"><strong id="count">0 thông báo</strong><button id="deleteSelected" class="danger">Xóa mục đã chọn</button><button id="deleteAll" class="danger">Dọn sạch thông báo</button></div><div id="list"></div></section>
+<section class="card"><h2>Script nhúng website</h2><p>Sao chép toàn bộ mã và dán vào khối HTML hoặc trước thẻ đóng body của website nội bộ. Khi website vừa mở, popup sẽ KHÔNG tự chạy từ LIVE cũ. Chỉ lệnh LIVE mới được bấm sau khi website đang mở mới làm popup xuất hiện. Có nút Tắt LIVE trong bảng quản lý; người xem bấm Đã đọc cũng tự tắt LIVE trên Firebase. Thay script cũ bằng script này, không nhúng cả hai.</p><div class="tools"><input id="employee" class="grow" placeholder="Để trống: mọi người; nhập tên: chỉ hiển thị người đó"><button id="generate">Tạo script</button><button id="copy" class="secondary">Sao chép</button></div><textarea id="snippet" readonly aria-label="Script nhúng"></textarea><p id="copyStatus" class="status"></p><p class="status">Lọc tên chỉ điều chỉnh hiển thị, không phải phân quyền truy cập. Mật khẩu khóa giao diện quản lý; quyền đọc/ghi/xóa dữ liệu vẫn do Firebase Rules hiện có quyết định. Ứng dụng chỉ xóa nhánh thông báo, không xóa kế hoạch hay cấu hình.</p></section></main><script>
+'use strict';
+const URL_BASE='https://kehoachnew-532cf-default-rtdb.firebaseio.com/ideco_huyen_plan_notifications_v1';
+const $=id=>document.getElementById(id);let tree={},es,busy=false,authenticated=false,managerTimer=null,managerPolling=false,managerRevision=0;const selected=new Set();
+const clean=v=>String(v||'').normalize('NFC').toLocaleLowerCase('vi');
+function rows(){return Object.entries(tree).filter(([,r])=>r&&typeof r.content==='string').sort((a,b)=>(b[1].createdAt||0)-(a[1].createdAt||0));}
+function render(){
+ const all=rows(),visible=all.filter(([,r])=>(!$('date').value||r.planDate===$('date').value)&&clean(r.employeeName+' '+r.content).includes(clean($('search').value)));
+ for(const id of selected)if(!tree[id])selected.delete(id);
+ $('count').textContent=visible.length+' / '+all.length+' thông báo · '+selected.size+' đã chọn';$('list').replaceChildren();
+ for(const [id,r] of visible){
+ const article=document.createElement('article'),line=document.createElement('div');line.className='tools';const check=document.createElement('input');check.type='checkbox';check.checked=selected.has(id);check.setAttribute('aria-label','Chọn '+r.employeeName);check.onchange=()=>{check.checked?selected.add(id):selected.delete(id);$('count').textContent=visible.length+' / '+all.length+' thông báo · '+selected.size+' đã chọn';};
+ const title=document.createElement('strong');title.textContent=r.employeeName+' · Bộ phận: '+({business:'Kinh doanh',accounting:'Kế toán',logistics:'Kho vận',sop:'SOP'}[r.department]||r.department||'Chưa khai')+' · Kế hoạch ngày '+r.planDate;line.append(check,title);
+ const meta=document.createElement('p');meta.className='meta';
+ const liveState=r.liveActive===true
+   ? '🟢 ĐANG LIVE từ '+new Date(Number(r.liveAt)).toLocaleString('vi-VN')
+   : (r.liveAt?'⚪ LIVE đã tắt · lần phát gần nhất '+new Date(Number(r.liveAt)).toLocaleString('vi-VN'):'Chưa phát LIVE');
+ meta.textContent='Phân tích '+new Date(r.createdAt).toLocaleString('vi-VN')+' · '+liveState;
+ const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='Xem toàn bộ góp ý';const content=document.createElement('div');content.className='body';content.textContent=r.content;details.append(summary,content);
+ const actions=document.createElement('div');actions.className='actions';
+ const live=document.createElement('button');live.textContent=r.liveActive===true?'● PHÁT LIVE LẠI':'● LIVE';live.disabled=busy;live.onclick=()=>publishLive(id);
+ const stopLiveBtn=document.createElement('button');stopLiveBtn.className='danger';stopLiveBtn.textContent='■ TẮT LIVE';stopLiveBtn.disabled=busy||r.liveActive!==true;stopLiveBtn.onclick=()=>stopLive(id);
+ const pdf=document.createElement('button');pdf.className='secondary';pdf.textContent='Xuất PDF';pdf.onclick=()=>huyenPrint(r);
+ const del=document.createElement('button');del.className='danger';del.textContent='Xóa';del.disabled=busy;del.onclick=()=>removeIds([id]);
+ actions.append(live,stopLiveBtn,pdf,del);article.append(line,meta,details,actions);$('list').append(article);
+ }
+ if(!visible.length)$('list').textContent='Chưa có thông báo phù hợp. Phân tích Huyền thành công ở bản ứng dụng mới để tạo thông báo.';
+ $('deleteSelected').disabled=busy;$('deleteAll').disabled=busy;
+}
+function connect(){if(!authenticated)return;if(es)es.close();$('status').textContent='Đang kết nối…';es=new EventSource(URL_BASE+'.json');for(const kind of ['put','patch'])es.addEventListener(kind,e=>{try{if(!authenticated)return;managerRevision++;tree=huyenApplyEvent(tree,JSON.parse(e.data),kind==='patch');$('status').textContent='Đã đồng bộ trực tuyến · '+new Date().toLocaleTimeString('vi-VN');render();}catch{$('status').textContent='Dữ liệu thông báo không hợp lệ.';}});es.onerror=()=>{$('status').textContent='Đang kết nối lại. Kiểm tra mạng hoặc quyền đọc Firebase nếu lỗi kéo dài.';};for(const kind of ['cancel','auth_revoked'])es.addEventListener(kind,()=>{es.close();tree={};render();$('status').textContent='Firebase từ chối quyền đọc. Cần quyền truy cập nhánh thông báo.';});}
+async function publishLive(id){
+ if(!authenticated || busy || !tree[id])return;
+ busy=true;render();$('status').textContent='Đang phát LIVE…';
+ const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),15000);
+ try {
+  const token=crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2);
+  const updates={};updates[id+'/liveToken']=token;updates[id+'/liveAt']={'.sv':'timestamp'};updates[id+'/liveActive']=true;updates[id+'/liveStoppedAt']=null;updates[id+'/liveReadToken']=null;
+  const res=await fetch(URL_BASE+'.json',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(updates),signal:ctl.signal});
+  if(!res.ok)throw new Error('Firebase HTTP '+res.status);
+  const check=await fetch(URL_BASE+'/'+encodeURIComponent(id)+'.json?t='+Date.now(),{cache:'no-store',signal:ctl.signal});
+  if(!check.ok)throw new Error('Không xác minh được LIVE: HTTP '+check.status);
+  const saved=await check.json();if(saved?.liveToken!==token || saved?.liveActive!==true)throw new Error('Tín hiệu LIVE chưa khớp.');
+  tree[id]=saved;
+  $('status').textContent='Đã bật LIVE. Các website đang mở sẽ nhận lệnh mới; website vừa khởi động sẽ không tự phát lại LIVE cũ.';
+ } catch(e){$('status').textContent='Chưa xác nhận phát LIVE: '+e.message+'. Kiểm tra kết nối trước khi thử lại.';}
+ finally{clearTimeout(timer);busy=false;render();}
+}
+async function stopLive(id){
+ if(!authenticated || busy || !tree[id])return;
+ busy=true;render();$('status').textContent='Đang tắt LIVE…';
+ const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),15000);
+ try{
+  const res=await fetch(URL_BASE+'/'+encodeURIComponent(id)+'.json',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({liveActive:false,liveStoppedAt:{'.sv':'timestamp'}}),signal:ctl.signal});
+  if(!res.ok)throw new Error('Firebase HTTP '+res.status);
+  tree[id]={...tree[id],liveActive:false,liveStoppedAt:Date.now()};
+  $('status').textContent='Đã tắt LIVE. Popup đang mở trên website sẽ tự đóng.';
+ }catch(e){$('status').textContent='Chưa tắt được LIVE: '+e.message+'. Kiểm tra kết nối rồi thử lại.';}
+ finally{clearTimeout(timer);busy=false;render();}
+}
+async function removeIds(ids,all=false){
+ if(!authenticated || busy)return;if(!ids.length){alert('Chưa chọn thông báo.');return;}
+ if(all){if(prompt('Xóa '+ids.length+' thông báo đang có? Nhập XOA để xác nhận. Thông báo mới đến sau thời điểm này được giữ lại.')!=='XOA')return;}
+ else if(!confirm('Xóa '+ids.length+' thông báo đã chọn? Không ảnh hưởng dữ liệu kế hoạch.'))return;
+ busy=true;render();const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),15000);
+ try{const updates=Object.fromEntries(ids.map(id=>[id,null]));const res=await fetch(URL_BASE+'.json',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(updates),signal:ctl.signal});if(!res.ok)throw new Error('Firebase HTTP '+res.status);ids.forEach(id=>{delete tree[id];selected.delete(id);});$('status').textContent='Đã xóa '+ids.length+' thông báo.';}
+ catch(e){$('status').textContent='Chưa xác nhận xóa: '+e.message+'. Hãy kết nối lại để kiểm tra.';}
+ finally{clearTimeout(timer);busy=false;render();}
+}
+$('search').oninput=render;$('date').onchange=render;$('refresh').onclick=connect;$('deleteSelected').onclick=()=>removeIds([...selected]);$('deleteAll').onclick=()=>removeIds(rows().map(([id])=>id),true);
+const widgetTemplate="(function(){\n'use strict';\nconst employeeFilter=__FILTER__;\nfunction boot(){\nconst existing=document.querySelector('[data-ideco-huyen-widget]');\nif(existing?.dataset.idecoHuyenWidget==='live-v4')return;\nif(existing)existing.remove();\nconst host=document.createElement('div');host.dataset.idecoHuyenWidget='live-v4';\nhost.style.cssText='all:initial!important;position:fixed!important;right:16px!important;bottom:16px!important;z-index:2147483000!important;display:block!important';\nconst root=host.attachShadow({mode:'closed'});\nroot.innerHTML=`<style>:host{all:initial}*{box-sizing:border-box}.panel[hidden]{display:none!important}.panel{font:15px/1.6 Arial,sans-serif;background:white;color:#18332e;border:1px solid #cbded5;border-radius:20px;box-shadow:0 18px 70px #0004;width:min(620px,calc(100vw - 32px));max-height:85vh;overflow:auto;padding:22px}h2{font-size:20px;margin:3px 0 10px}.tag{font-size:12px;font-weight:bold;color:#08745e}.meta{font-size:13px;color:#5e756c;white-space:pre-wrap;margin:8px 0}.content{white-space:pre-wrap;overflow-wrap:anywhere;max-height:55vh;overflow:auto;background:#f1f7f4;padding:16px;border-radius:12px;margin:15px 0}button{font:700 15px Arial;cursor:pointer;background:#08745e;color:white;border:0;border-radius:12px;padding:13px 20px;width:100%}button:focus-visible{outline:3px solid #e9ae24}</style><section class=\"panel\" hidden role=\"dialog\" aria-modal=\"false\" aria-label=\"Thông báo phân tích kế hoạch từ Huyền\"><div class=\"tag\">● LIVE · HUYỀN GÓP Ý KẾ HOẠCH</div><h2></h2><p class=\"meta\"></p><div class=\"content\" tabindex=\"0\"></div><button>Đã đọc · Đóng thông báo</button></section>`;\ndocument.body.append(host);\nconst $=s=>root.querySelector(s),panel=$('.panel');\nconst clean=v=>String(v||'').normalize('NFC').trim().toLocaleLowerCase('vi');\nconst storageKey='ideco_huyen_live_v4:'+clean(employeeFilter);\nlet startupPrimed=false,startupTokens=new Set(); // LIVE đang có lúc website vừa mở chỉ được ghi nhận, không bật popup.\nlet tree={},active=null,readTokens=new Set(),latestTime=0,previousFocus=null;\ntry{const state=JSON.parse(localStorage.getItem(storageKey)||'{}');readTokens=new Set(state.read||[]);latestTime=0;}catch{}\nfunction remember(){try{localStorage.setItem(storageKey,JSON.stringify({read:[...readTokens].slice(-500),latestTime}));}catch{}}\nfunction hide(){panel.hidden=true;active=null;}\nfunction render(){\n if(!startupPrimed){\n   for(const [id,r] of Object.entries(tree)){\n     if(r&&r.liveActive===true&&r.liveToken)startupTokens.add(id+':'+r.liveToken);\n   }\n   startupPrimed=true;hide();return;\n }\n const list=Object.entries(tree).filter(([id,r])=>\n   r&&r.content&&r.liveActive===true&&r.liveToken&&\n   Number.isFinite(Number(r.liveAt))&&Number(r.liveAt)>0&&\n   !startupTokens.has(id+':'+r.liveToken)&&\n   (!employeeFilter||clean(r.employeeName)===clean(employeeFilter))\n ).sort((a,b)=>b[1].liveAt-a[1].liveAt);\n const latest=list[0];\n if(!latest || Number(latest[1].liveAt)<latestTime){hide();return;}\n const [id,r]=latest,token=id+':'+r.liveToken;\n latestTime=Math.max(latestTime,Number(r.liveAt));remember();\n if(readTokens.has(token)){hide();return;}\n if(active?.token===token)return;\n previousFocus=document.activeElement;active={id,token,liveToken:r.liveToken};\n $('h2').textContent=r.employeeName||'Người lập kế hoạch';\n $('.meta').textContent='Bộ phận: '+({business:'Kinh doanh',accounting:'Kế toán',logistics:'Kho vận',sop:'SOP'}[r.department]||r.department||'Chưa khai')+'\\nNgày lập kế hoạch: '+(r.planDate||'')+'\\nPhát LIVE: '+new Date(Number(r.liveAt)).toLocaleString('vi-VN');\n $('.content').textContent=r.content;$('.content').scrollTop=0;panel.hidden=false;\n}\nasync function acknowledgeAndStop(){\n const current=active;\n if(current){readTokens.add(current.token);remember();}\n hide();\n if(previousFocus?.isConnected)previousFocus.focus();\n if(!current)return;\n try{\n   const itemUrl='https://kehoachnew-532cf-default-rtdb.firebaseio.com/ideco_huyen_plan_notifications_v1/'+encodeURIComponent(current.id)+'.json';\n   const check=await fetch(itemUrl+'?t='+Date.now(),{cache:'no-store'});\n   if(!check.ok)throw new Error('HTTP '+check.status);\n   const saved=await check.json();\n   if(saved?.liveToken!==current.liveToken || saved?.liveActive!==true)return;\n   const res=await fetch(itemUrl,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({liveActive:false,liveStoppedAt:{'.sv':'timestamp'},liveReadToken:current.liveToken})});\n   if(!res.ok)throw new Error('HTTP '+res.status);\n }catch(e){report('Đã đóng popup nhưng chưa đồng bộ được trạng thái tắt LIVE: '+e.message);}\n}\n$('button').onclick=()=>{void acknowledgeAndStop();};\nwindow.addEventListener('storage',e=>{if(e.key!==storageKey)return;try{const state=JSON.parse(e.newValue||'{}');readTokens=new Set(state.read||[]);latestTime=Math.max(latestTime,Number(state.latestTime)||0);render();}catch{}});\n\nconst endpoint='https://kehoachnew-532cf-default-rtdb.firebaseio.com/ideco_huyen_plan_notifications_v1.json';\nlet es=null,pollTimer=null,polling=false,stopped=false,revision=0;\nfunction report(message){host.dataset.connection=message;console.warn('[Huyền LIVE] '+message);}\nfunction applyTree(next){tree=next&&typeof next==='object'?next:{};render();host.dataset.connection='connected';}\nasync function poll(){\n if(stopped||polling)return;polling=true;\n const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),10000),startedRevision=revision;\n try{\n  const res=await fetch(endpoint+'?t='+Date.now(),{cache:'no-store',signal:ctl.signal});\n  if(!res.ok)throw new Error('Firebase HTTP '+res.status);\n  const next=await res.json();\n  if(!stopped&&revision===startedRevision)applyTree(next);\n }catch(e){if(!stopped)report('Chưa đọc được dữ liệu: '+e.message);}\n finally{clearTimeout(timer);polling=false;}\n}\nfunction start(){\n stopped=false;if(pollTimer)return;\n if(typeof EventSource==='function'){\n  es=new EventSource(endpoint);\n  for(const kind of ['put','patch'])es.addEventListener(kind,e=>{\n    if(stopped)return;\n    try{\n      revision++;tree=huyenApplyEvent(tree,JSON.parse(e.data),kind==='patch');\n      if(active){\n        const current=tree[active.id];\n        if(!current || current.liveActive!==true || current.liveToken!==active.liveToken)hide();\n      }\n      render();host.dataset.connection='connected';\n    }\n    catch(e){report('Không đọc được sự kiện, chuyển kiểm tra dữ liệu dự phòng.');void poll();}\n  });\n  es.onerror=()=>{void poll();};\n  for(const kind of ['cancel','auth_revoked'])es.addEventListener(kind,()=>{es.close();hide();report('Firebase từ chối quyền đọc.');});\n }\n void poll();pollTimer=setInterval(poll,3000);\n}\nfunction stop(){stopped=true;if(es)es.close();clearInterval(pollTimer);pollTimer=null;}\nwindow.addEventListener('pagehide',stop);\nwindow.addEventListener('pageshow',()=>{if(stopped){startupPrimed=false;startupTokens.clear();start();}});\ndocument.addEventListener('visibilitychange',()=>{if(!document.hidden)void poll();});\nstart();\nfunction huyenApplyEvent(tree, event, patch) {\n  function put(path,value){\n    const keys=path.split('/').filter(Boolean);\n    if(keys.some(k=>['__proto__','constructor','prototype'].includes(k)))return;\n    if(!keys.length){tree=value||{};return;}\n    let p=tree;\n    for(const k of keys.slice(0,-1)){if(!p[k]||typeof p[k]!=='object')p[k]={};p=p[k];}\n    if(value===null)delete p[keys.at(-1)];else p[keys.at(-1)]=value;\n  }\n  if(patch){for(const [k,v] of Object.entries(event.data||{}))put(event.path+'/'+k,v);}\n  else put(event.path,event.data);\n  return tree;\n}\n\n}\nif(document.body)boot();else document.addEventListener(\"DOMContentLoaded\",boot,{once:true});\n})();";
+function generate(){const script=widgetTemplate.replace('__FILTER__',()=>JSON.stringify($('employee').value.trim()).replace(/</g,'\\u003c'));$('snippet').value='<script>\n'+script+'\n<'+ '/script>';}
+$('generate').onclick=generate;$('copy').onclick=async()=>{try{await navigator.clipboard.writeText($('snippet').value);$('copyStatus').textContent='Đã sao chép script.';}catch{$('snippet').select();$('copyStatus').textContent='Nhấn Ctrl+C để sao chép mã đã chọn.';}};
+function huyenPrint(record) {
+  const w=window.open('','_blank');
+  if(!w){alert('Hãy cho phép cửa sổ bật lên để xuất PDF.');return;}
+  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  w.document.open();
+  w.document.write('<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Huyen_'+esc(record.employeeName)+'_'+esc(record.planDate)+'</title><style>@page{size:A4;margin:18mm}body{font:12pt Arial,sans-serif;line-height:1.6;color:#172b35;max-width:180mm;margin:20px auto}h1{font-size:20pt;color:#08745e}p{margin:6px 0}.content{white-space:pre-wrap;overflow-wrap:anywhere;orphans:3;widows:3}button{padding:12px;background:#08745e;color:white;border:0;border-radius:8px}@media print{button,.hint{display:none}body{margin:0;max-width:none}}</style></head><body><button onclick="window.print()">In / Lưu thành PDF</button><p class="hint">Chọn “Lưu dưới dạng PDF” trong hộp thoại in.</p><h1>IDECO · Góp ý kế hoạch từ Huyền</h1><p><b>Người lập:</b> '+esc(record.employeeName)+'</p><p><b>Ngày lập kế hoạch:</b> '+esc(record.planDate)+'</p><p><b>Bộ phận:</b> '+esc(record.department||'')+'</p><p><b>Thời điểm phân tích:</b> '+esc(record.createdAt?new Date(record.createdAt).toLocaleString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh'}):'')+'</p><hr><div class="content">'+esc(record.content)+'</div></body></html>');
+  w.document.close();w.focus();setTimeout(()=>w.print(),350);
+}
+function huyenApplyEvent(tree, event, patch) {
+  function put(path,value){
+    const keys=path.split('/').filter(Boolean);
+    if(keys.some(k=>['__proto__','constructor','prototype'].includes(k)))return;
+    if(!keys.length){tree=value||{};return;}
+    let p=tree;
+    for(const k of keys.slice(0,-1)){if(!p[k]||typeof p[k]!=='object')p[k]={};p=p[k];}
+    if(value===null)delete p[keys.at(-1)];else p[keys.at(-1)]=value;
+  }
+  if(patch){for(const [k,v] of Object.entries(event.data||{}))put(event.path+'/'+k,v);}
+  else put(event.path,event.data);
+  return tree;
+}
+
+
+async function managerPoll(){
+ if(!authenticated||managerPolling||busy)return;managerPolling=true;
+ const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),10000),rev=managerRevision;
+ try{const res=await fetch(URL_BASE+'.json?t='+Date.now(),{cache:'no-store',signal:ctl.signal});if(!res.ok)throw new Error('Firebase HTTP '+res.status);const next=await res.json();if(authenticated && rev===managerRevision){tree=next||{};render();}}
+ catch(e){if(authenticated)$('status').textContent='Chưa đọc được dữ liệu: '+e.message;}
+ finally{clearTimeout(timer);managerPolling=false;}
+}
+$('loginForm').onsubmit=e=>{
+ e.preventDefault();
+ if($('password').value!=='minhtriet1973'){$('loginError').textContent='Mật khẩu chưa đúng.';return;}
+ authenticated=true;$('password').value='';$('loginError').textContent='';$('loginGate').hidden=true;$('managerMain').hidden=false;
+ connect();void managerPoll();managerTimer=setInterval(managerPoll,3000);
+};
+$('lock').onclick=()=>{authenticated=false;if(es)es.close();clearInterval(managerTimer);managerTimer=null;tree={};selected.clear();render();$('managerMain').hidden=true;$('loginGate').hidden=false;$('password').focus();};
+generate();window.addEventListener('pagehide',()=>{if(es)es.close();clearInterval(managerTimer);});
+
+</script></body></html>
